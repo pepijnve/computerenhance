@@ -11,6 +11,7 @@ public class Emu8086 {
 
     private DecodeState decodeState;
     private ByteBuffer registerFile;
+    private int flags;
     private ByteBuffer memory;
 
     public Emu8086() throws IOException {
@@ -38,6 +39,26 @@ public class Emu8086 {
             default -> System.out.printf("%s not implemented%n", decodeState.opcode);
         }
     }
+
+    private void setFlag(Flag flag, boolean value) {
+        if (value) {
+            setFlag(flag);
+        } else {
+            clearFlag(flag);
+        }
+    }
+
+    private void setFlag(Flag flag) {
+        flags |= flag.setTestMask;
+    }
+
+    private void clearFlag(Flag flag) {
+        flags &= flag.clearMask;
+    }
+
+    private boolean getFlag(Flag flag) {
+        return (flags & flag.setTestMask) != 0;
+    }
     
     private void cmp() {
         printTwoOperand();
@@ -48,7 +69,46 @@ public class Emu8086 {
     }
 
     private void add() {
+        Register reg = decodeState.reg;
+        Address rm = decodeState.rm;
+
+        ByteBuffer previousRegisterFile = ByteBuffer.allocate(registerFile.capacity()).order(registerFile.order());
+        previousRegisterFile.put(registerFile);
+        previousRegisterFile.clear();
+        registerFile.clear();
+
+        Address target;
+        int op1;
+        int op2;
+        if (rm == null) {
+            op1 = get(reg);
+            op2 = decodeState.immediate;
+            target = reg;
+        } else if (reg == null) {
+            op1 = get(rm);
+            op2 = decodeState.immediate;
+            target = rm;
+        } else if (decodeState.isToReg) {
+            op1 = get(reg);
+            op2 = get(rm);
+            target = reg;
+        } else {
+            op1 = get(reg);
+            op2 = get(rm);
+            target = rm;
+        }
+
+        int result = op1 + op2;
+
+        setFlag(Flag.CARRY, decodeState.isWide ? ((result & 0x100) != 0) : ((result & 0x10) != 0));
+        setFlag(Flag.SIGN, decodeState.isWide ? ((result & 0x80) != 0) : ((result & 0x8) != 0));
+        setFlag(Flag.ZERO, result == 0);
+        setFlag(Flag.PARITY, ParityTable.getParity(result));
+
+        set(target, result);
+
         printTwoOperand();
+        printRegisterChange(previousRegisterFile);
     }
 
     private void pop() {
@@ -188,6 +248,13 @@ public class Emu8086 {
             }
             System.out.printf("%s: 0x%04x%n", register, get(register));
         }
+        StringBuilder flags = new StringBuilder();
+        for (Flag f : Flag.values()) {
+            if (getFlag(f)) {
+                flags.append(f.name().substring(0, 1));
+            }
+        }
+        System.out.printf("%s: %s%n", "flags", flags);
     }
 
     private void printRegisterChange(ByteBuffer previousRegisterFile) {
